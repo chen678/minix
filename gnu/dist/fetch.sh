@@ -25,6 +25,7 @@ then
 
 	tar -xjf make-3.80.tar.bz2 && \
 	mv make-3.80 gmake && \
+	sed -i '/#if !defined __alloca && !defined __GNU_LIBRARY__/c\#if !defined __alloca && defined __GNU_LIBRARY__' gmake/glob/glob.c
 	echo "make*" >> .gitignore
 	echo "gmake*" >> .gitignore
 fi
