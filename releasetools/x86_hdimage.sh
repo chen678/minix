@@ -5,7 +5,7 @@ set -e
 : ${OBJ=../obj.${ARCH}}
 : ${CROSS_TOOLS=${OBJ}/"tooldir.`uname -s`-`uname -r`-`uname -m`"/bin}
 : ${CROSS_PREFIX=${CROSS_TOOLS}/i586-elf32-minix-}
-: ${JOBS=1}
+: ${JOBS=16}
 : ${DESTDIR=${OBJ}/destdir.$ARCH}
 : ${FSTAB=${DESTDIR}/etc/fstab}
 : ${BUILDVARS=}
@@ -33,7 +33,18 @@ mkdir -p $IMG_DIR
 # Call build.sh using a sloppy file list so we don't need to remove the installed /etc/fstag
 #
 export CPPFLAGS=${FLAG}
+if [[ -n "$1" ]] && [[ "$1" = "FULL" ]]
+then
 sh ${BUILDSH} -V SLOPPY_FLIST=yes -V MKBINUTILS=yes -V MKGCCCMDS=yes -j ${JOBS} -m ${ARCH} -O ${OBJ} -D ${DESTDIR} ${BUILDVARS} -U -u distribution
+else
+if [ ! -d ${CROSS_TOOLS} ]
+then
+echo "Cross-Compiling Toolchains not found. Please run x86_hdimage.sh FULL to build toolchains."
+exit 1
+fi
+REALPATH_CROSS_TOLLS=$(realpath ${CROSS_TOOLS})
+sh ${BUILDSH} -E -T $REALPATH_CROSS_TOLLS -V MKUPDATE=yes -V NOCLEANDIR=yes -j ${JOBS} -m ${ARCH} -O ${OBJ} -D ${DESTDIR} ${BUILDVARS} -U -u distribution
+fi
 
 #
 # This script creates a bootable image and should at some point in the future
