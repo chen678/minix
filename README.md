@@ -29,3 +29,9 @@ sudo ./releasetools/x86_hdimage.sh
 
 This will enable "Expert" mode in NetBSD's `build.sh`. 
 And it will set `MKUPDATE`, `NOCLEANDIR` to yes to avoid repeated compile. Also `-T` option is set to use the toolchians that are previous built.
+
+
+## Tuning
+In [x86_hdimage.sh](releasetools/x86_hdimage.sh), the variable `$JOBS` is set to `16`, indicating the maximum number 
+of parallel task is 16. You can change this value to further speed-up building process. Normally, it shoule be the number of your 
+logical processors.
