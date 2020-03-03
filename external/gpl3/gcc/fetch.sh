@@ -43,6 +43,6 @@ then
 	cp ../files/arm-minix.h gcc/config/arm/minix.h && \
 	cp ../files/i386-minix.h gcc/config/i386/minix.h && \
 	cp ../files/gcov-minix-fs-wrapper.h gcc/ 
-	git apply --directory=external/gpl3/gcc/dist gnu_inline_fix.patch
+	git apply --directory=external/gpl3/gcc/dist ../gnu_inline_fix.patch
 fi
 
