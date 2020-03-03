@@ -28,10 +28,15 @@ sudo ./releasetools/x86_hdimage.sh
 ```
 
 This will enable "Expert" mode in NetBSD's `build.sh`. 
-And it will set `MKUPDATE`, `NOCLEANDIR` to yes to avoid repeated compile. Also `-T` option is set to use the toolchians that are previous built.
+And it will set `MKUPDATE`, `NOCLEANDIR` to `yes` to avoid repeated compile. Also `-T` option is set to use the toolchians that are previously built.
 
 
 ## Tuning
 In [x86_hdimage.sh](releasetools/x86_hdimage.sh), the variable `$JOBS` is set to `16`, indicating the maximum number 
 of parallel task is 16. You can change this value to further speed-up building process. Normally, it shoule be the number of your 
 logical processors.
+
+
+## Notes
+Since the toolchian contains `gcc-4`, which are compiled based on outdated C98. Using newer version of gcc to build `gcc-4` would have
+several issues. Related fixs are in [commit f66913](https://github.com/charlescao460/minix/commit/f66913f4a3d05c910d34343792be7199394487b8).
