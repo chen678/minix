@@ -2,6 +2,8 @@
 IMAG_PATH=$(realpath minix_x86.img)
 cd ../obj.i386/destdir.i386/boot/minix/.temp/
 qemu-system-x86_64 \
+    -enable-kvm \
+    -cpu host \
     -serial mon:stdio \
     -kernel kernel \
     -append "console=tty00 rootdevname=c0d0p0" \

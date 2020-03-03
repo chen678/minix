@@ -43,7 +43,7 @@ echo "Cross-Compiling Toolchains not found. Please run x86_hdimage.sh FULL to bu
 exit 1
 fi
 REALPATH_CROSS_TOLLS=$(realpath ${CROSS_TOOLS})
-sh ${BUILDSH} -E -T $REALPATH_CROSS_TOLLS -V MKUPDATE=yes -V NOCLEANDIR=yes -j ${JOBS} -m ${ARCH} -O ${OBJ} -D ${DESTDIR} ${BUILDVARS} -U -u distribution
+sh ${BUILDSH} -E -T $REALPATH_CROSS_TOLLS -V SLOPPY_FLIST=yes -V MKUPDATE=yes -V NOCLEANDIR=yes -j ${JOBS} -m ${ARCH} -O ${OBJ} -D ${DESTDIR} ${BUILDVARS} -U -u distribution
 fi
 
 #
