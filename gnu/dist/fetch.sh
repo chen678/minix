@@ -25,5 +25,7 @@ then
 
 	tar -xjf make-3.80.tar.bz2 && \
 	mv make-3.80 gmake
+	#For legacy gnu make
+	sed -i 's/#if !defined __alloca && !defined __GNU_LIBRARY__/#if !defined __alloca && defined __GNU_LIBRARY__'
 fi
 
