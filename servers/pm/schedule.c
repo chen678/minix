@@ -80,7 +80,8 @@ int sched_start_user(endpoint_t ep, struct mproc *rmp)
 		rmp->mp_endpoint, 			/* schedulee_e */
 		inherit_from, 				/* parent_e */
 		maxprio, 				/* maxprio */
-		&rmp->mp_scheduler);			/* *newsched_e */
+		&rmp->mp_scheduler,/* *newsched_e */
+		rmp->mp_pid);			//CS577 Add PM's PID here.
 }
 
 /*===========================================================================*

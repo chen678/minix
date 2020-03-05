@@ -1167,6 +1167,11 @@
 #	define SCHEDULING_PRIORITY	m9_s1
 #	define SCHEDULING_CPU		m9_l4
 
+#   define SCHEDULING_LOTTERY_PID m1_i1
+#   define SCHEDULING_LOTTERY_NUMBER m1_i2
+
+#   define SCHEDULING_GETTICKS m9_l1
+
 /*
  * SCHEDULING_START uses _ENDPOINT, _PRIORITY and _QUANTUM from
  * SCHEDULING_NO_QUANTUM/SYS_SCHEDULE
@@ -1175,6 +1180,7 @@
 #	define SCHEDULING_SCHEDULER	m9_l1 /* Overrides _ENDPOINT on return*/
 #	define SCHEDULING_PARENT	m9_l3
 #	define SCHEDULING_MAXPRIO	m9_l4
+#	define SCHEDULING_PMID	m9_l5
 
 #define SCHEDULING_STOP		(SCHEDULING_BASE+3)
 
@@ -1182,6 +1188,7 @@
 
 /* SCHEDULING_INHERIT is like SCHEDULING_START, but without _QUANTUM field */
 #define SCHEDULING_INHERIT	(SCHEDULING_BASE+5)
+
 
 /*===========================================================================*
  *              Messages for USB                                             *

@@ -17,3 +17,10 @@
 #include "proto.h"
 
 extern struct machine machine;		/* machine info */
+
+//#define _DEBUG_577
+#ifdef _DEBUG_577
+#define debug_print(f_, ...) do{printf((f_), __VA_ARGS__);}while(0)
+#else
+#define debug_print(f_, ...) do{}while(0)
+#endif // _DEBUG577

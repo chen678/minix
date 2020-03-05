@@ -1,6 +1,7 @@
 .vs
 VSProject
 external
+sys/arch
 *.img
 cscope.*
 *.swap

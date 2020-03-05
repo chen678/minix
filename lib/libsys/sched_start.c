@@ -13,7 +13,7 @@
  *===========================================================================*/
 int sched_inherit(endpoint_t scheduler_e, 
 	endpoint_t schedulee_e, endpoint_t parent_e, unsigned maxprio, 
-	endpoint_t *newscheduler_e)
+	endpoint_t *newscheduler_e, unsigned pm_pid) // CS577: ADD PM's PID
 {
 	int rv;
 	message m;
@@ -27,7 +27,8 @@ int sched_inherit(endpoint_t scheduler_e,
 	m.SCHEDULING_ENDPOINT	= schedulee_e;
 	m.SCHEDULING_PARENT	= parent_e;
 	m.SCHEDULING_MAXPRIO	= (int) maxprio;
-
+	m.SCHEDULING_PMID = pm_pid;
+	
 	/* Send the request to the scheduler */
 	if ((rv = _taskcall(scheduler_e, SCHEDULING_INHERIT, &m))) {
 		return rv;

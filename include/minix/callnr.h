@@ -59,6 +59,9 @@
 #define ITIMER		  64
 #define GETMCONTEXT       67
 #define SETMCONTEXT       68
+//CS577
+#define LOTTERYNUMBER 69
+#define GETTICKS 70
 
 /* Posix signal handling. */
 #define SIGACTION	  71

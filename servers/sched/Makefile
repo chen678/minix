@@ -3,7 +3,7 @@ PROG=	sched
 SRCS=	main.c schedule.c utility.c
 
 DPADD+=	${LIBSYS} ${LIBTIMERS}
-LDADD+=	-lsys -ltimers
+LDADD+=	-lsys -ltimers -Wl,-Ttext=0x800000 -g
 
 MAN=
 

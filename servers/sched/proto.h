@@ -2,6 +2,7 @@
 
 struct schedproc;
 #include <timers.h>
+#include <minix/syslib.h>
 
 /* main.c */
 int main(void);
@@ -12,7 +13,8 @@ int do_noquantum(message *m_ptr);
 int do_start_scheduling(message *m_ptr);
 int do_stop_scheduling(message *m_ptr);
 int do_nice(message *m_ptr);
-void init_scheduling(void);
+int do_lottery_number(message* m_ptr);
+int do_getticks(message* m_ptr);
 
 /* utility.c */
 int no_sys(int who_e, int call_nr);
