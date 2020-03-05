@@ -1,3 +1,7 @@
+.vs
+VSProject
+external
+*.img
 cscope.*
 *.swap
 .*.sw[po]

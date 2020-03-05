@@ -36,14 +36,24 @@ export CPPFLAGS=${FLAG}
 if [[ -n "$1" ]] && [[ "$1" = "FULL" ]]
 then
 sh ${BUILDSH} -V SLOPPY_FLIST=yes -V MKBINUTILS=yes -V MKGCCCMDS=yes -j ${JOBS} -m ${ARCH} -O ${OBJ} -D ${DESTDIR} ${BUILDVARS} -U -u distribution
-else
-if [ ! -d ${CROSS_TOOLS} ]
+
+elif [[ -n "$1" ]] && [[ "$1" = "IMAGEONLY" ]]
 then
-echo "Cross-Compiling Toolchains not found. Please run x86_hdimage.sh FULL to build toolchains."
-exit 1
-fi
+echo "Cretae image only."
+
+else
+	if [ ! -d ${CROSS_TOOLS} ]
+	then
+	echo "Cross-Compiling Toolchains not found. Please run x86_hdimage.sh FULL to build toolchains."
+	exit 1
+	fi
 REALPATH_CROSS_TOLLS=$(realpath ${CROSS_TOOLS})
 sh ${BUILDSH} -E -T $REALPATH_CROSS_TOLLS -V SLOPPY_FLIST=yes -V MKUPDATE=yes -V NOCLEANDIR=yes -j ${JOBS} -m ${ARCH} -O ${OBJ} -D ${DESTDIR} ${BUILDVARS} -U -u distribution
+fi
+
+if [[ -n "$1" ]] && [[ "$1" = "COMPILEONLY" ]]
+then
+exit 0
 fi
 
 #
@@ -113,7 +123,17 @@ echo "creating the file systems"
 cat ${DESTDIR}/METALOG.sanitised | ${CROSS_TOOLS}/nbmtree -N ${DESTDIR}/etc -C > ${IMG_DIR}/input
 
 # add fstab
+
 echo "./etc/fstab type=file uid=0 gid=0 mode=0755 size=747 time=1365060731.000000000" >> ${IMG_DIR}/input
+
+#Add additional file(s) to root
+for filename in ${DESTDIR}/home/*; do
+	if [ ! -d "$filename" ]; then
+		filesize=$(stat --printf="%s" $filename)
+		filename=$(basename -- "$filename")
+		echo "./home/$filename type=file uid=0 gid=0 mode=0755 size=$filesize time=1365060731.000000000" >> ${IMG_DIR}/input
+	fi
+done
 
 # fill root.img (skipping /usr entries while keeping the /usr directory)
 cat ${IMG_DIR}/input  | grep -v "^./usr/" | ${CROSS_TOOLS}/nbtoproto -b ${DESTDIR} -o ${IMG_DIR}/root.in

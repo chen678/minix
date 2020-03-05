@@ -12,4 +12,5 @@ qemu-system-x86_64 \
     -net user \
     -net nic \
     -m 1024M \
-    -nographic
+    -nographic \
+    -gdb tcp::1234
