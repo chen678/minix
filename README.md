@@ -12,6 +12,11 @@ On Debian, run
 apt-get install build-essential curl git zlibc zlib1g zlib1g-dev m4 qemu
 ```
 
+Also, make a alias for `make`:
+```shell
+sudo ln -s /usr/bin/make /usr/bin/gmake
+```
+
 To get all needed dependencies.
 
 ## Cross-Build
