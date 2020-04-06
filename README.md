@@ -37,10 +37,12 @@ And it will set `MKUPDATE`, `NOCLEANDIR` to `yes` to avoid repeated compile. Als
 
 
 ## Tuning
-In [x86_hdimage.sh](releasetools/x86_hdimage.sh), the variable `$JOBS` is set to `16`, indicating the maximum number 
-of parallel task is 16. You can change this value to further speed-up building process. Normally, it shoule be the number of your 
+In [x86_hdimage.sh](releasetools/x86_hdimage.sh), the variable `$JOBS` is set to `1`, indicating the maximum number 
+of parallel task is 1, this is for the first time you run this script. You can change this value to further speed-up building process. Normally, it shoule be the number of your 
 logical processors.
 
+## Copy file to target vm
+In `<REPO_ROOT>/../obj.i386/destdir.i386/home`, all files (not folders) will be copied to target's system's `/root`
 
 ## Notes
 Since the toolchian contains `gcc-4`, which are compiled based on outdated C98. Using newer version of gcc to build `gcc-4` would have
