@@ -129,6 +129,12 @@ int main(void)
 		continue;
 	} else if(c < 0 || !vm_calls[c].vmc_func) {
 		/* out of range or missing callnr */
+		//577
+        if (msg.m_type == VM_PRINT_HOLES)
+		{
+			result = do_holes(&msg);
+		}
+
 	} else {
 		if (acl_check(&vmproc[caller_slot], c) != OK) {
 			printf("VM: unauthorized %s by %d\n",

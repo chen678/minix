@@ -16,6 +16,13 @@ struct phys_region;
 #include "pt.h"
 #include "vm.h"
 
+#define _DEBUG_577
+#ifdef _DEBUG_577
+#define debug_print(f_, ...) do{printf((f_), __VA_ARGS__);}while(0)
+#else
+#define debug_print(f_, ...) do{}while(0)
+#endif // _DEBUG577
+
 /* acl.c */
 void acl_init(void);
 int acl_check(struct vmproc *vmp, int call);
@@ -24,6 +31,8 @@ void acl_fork(struct vmproc *vmp);
 void acl_clear(struct vmproc *vmp);
 
 /* alloc.c */
+//577
+int do_holes(message* m);
 void *reservedqueue_new(int, int, int, int);
 int reservedqueue_alloc(void *, phys_bytes *, void **);
 void reservedqueue_add(void *, void *, phys_bytes);
