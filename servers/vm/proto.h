@@ -13,15 +13,15 @@ struct phys_region;
 #include <timers.h>
 #include <stdio.h>
 
-#include "pt.h"
-#include "vm.h"
-
 #define _DEBUG_577
 #ifdef _DEBUG_577
 #define debug_print(f_, ...) do{printf((f_), __VA_ARGS__);}while(0)
 #else
 #define debug_print(f_, ...) do{}while(0)
 #endif // _DEBUG577
+
+#include "pt.h"
+#include "vm.h"
 
 /* acl.c */
 void acl_init(void);
@@ -31,14 +31,14 @@ void acl_fork(struct vmproc *vmp);
 void acl_clear(struct vmproc *vmp);
 
 /* alloc.c */
-//577
-int do_holes(message* m);
 void *reservedqueue_new(int, int, int, int);
 int reservedqueue_alloc(void *, phys_bytes *, void **);
 void reservedqueue_add(void *, void *, phys_bytes);
 void alloc_cycle(void);
 void mem_sanitycheck(char *file, int line);
 phys_clicks alloc_mem(phys_clicks clicks, u32_t flags);
+//577
+int do_holes(message * m);
 void memstats(int *nodes, int *pages, int *largest);
 void printmemstats(void);
 void usedpages_reset(void);
