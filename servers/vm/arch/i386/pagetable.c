@@ -1,5 +1,6 @@
 
 #define _SYSTEM 1
+#define _POSIX_SOURCE 1
 
 #include <minix/callnr.h>
 #include <minix/com.h>
@@ -44,6 +45,8 @@ static struct pdm {
 	u32_t		*page_directories;
 } pagedir_mappings[MAX_PAGEDIR_PDES];
 
+static u32_t global_bit = 0;
+
 static multiboot_module_t *kern_mb_mod = NULL;
 static size_t kern_size = 0;
 static int kern_start_pde = -1;
@@ -59,14 +62,13 @@ struct vmproc *vmprocess = &vmproc[VM_PROC_NR];
  * page table.
  */
 #if SANITYCHECKS
-#define SPAREPAGES 200
-#define STATIC_SPAREPAGES 190
+#define SPAREPAGES 100
+#define STATIC_SPAREPAGES 90
 #else
 #ifdef __arm__
 # define SPAREPAGES 150
 # define STATIC_SPAREPAGES 140 
 #else
-static u32_t global_bit = 0;
 # define SPAREPAGES 20
 # define STATIC_SPAREPAGES 15 
 #endif /* __arm__ */
@@ -80,6 +82,12 @@ static struct {
 	void *pagedir;
 	phys_bytes phys;
 } sparepagedirs[SPAREPAGEDIRS];
+
+int missing_spares = SPAREPAGES;
+static struct {
+	void *page;
+	phys_bytes phys;
+} sparepages[SPAREPAGES];
 
 extern char _end;	
 #define is_staticaddr(v) ((vir_bytes) (v) < (vir_bytes) &_end)
@@ -104,7 +112,6 @@ int kernmappings = 0;
 #error CLICK_SIZE must be page size.
 #endif
 
-static void *spare_pagequeue;
 static char static_sparepages[VM_PAGE_SIZE*STATIC_SPAREPAGES] 
 	__aligned(VM_PAGE_SIZE);
 
@@ -149,20 +156,23 @@ static u32_t findhole(int pages)
 	static u32_t lastv = 0;
 	pt_t *pt = &vmprocess->vm_pt;
 	vir_bytes vmin, vmax;
-	u32_t holev = NO_MEM;
-	int holesize = -1;
+#if defined(__arm__)
+	u32_t holev;
+#endif
 
 	vmin = (vir_bytes) (&_end); /* marks end of VM BSS */
 	vmin += 1024*1024*1024;	/* reserve 1GB virtual address space for VM heap */
 	vmin &= ARCH_VM_ADDR_MASK; 
-	vmax = vmin + 100 * 1024 * 1024; /* allow 100MB of address space for VM */
+	vmax = VM_STACKTOP;
 
 	/* Input sanity check. */
 	assert(vmin + VM_PAGE_SIZE >= vmin);
 	assert(vmax >= vmin + VM_PAGE_SIZE);
 	assert((vmin % VM_PAGE_SIZE) == 0);
 	assert((vmax % VM_PAGE_SIZE) == 0);
+#if defined(__arm__)
 	assert(pages > 0);
+#endif
 
 	curv = lastv;
 	if(curv < vmin || curv >= vmax)
@@ -173,45 +183,64 @@ static u32_t findhole(int pages)
 	/* Start looking for a free page starting at vmin. */
 	while(curv < vmax) {
 		int pte;
+#if defined(__arm__)
+		int i, nohole;
+#endif
 
 		assert(curv >= vmin);
 		assert(curv < vmax);
 
-		pde = ARCH_VM_PDE(curv);
-		pte = ARCH_VM_PTE(curv);
+#if defined(__i386__)
+		pde = I386_VM_PDE(curv);
+		pte = I386_VM_PTE(curv);
+#elif defined(__arm__)
+		holev = curv; /* the candidate hole */
+		nohole = 0;
+		for (i = 0; i < pages && !nohole; ++i) {
+		    if(curv >= vmax) {
+			break;
+		    }
+#endif
 
-		if((pt->pt_dir[pde] & ARCH_VM_PDE_PRESENT) &&
-		   (pt->pt_pt[pde][pte] & ARCH_VM_PTE_PRESENT)) {
-			/* there is a page here - so keep looking for holes */
-			holev = NO_MEM;
-			holesize = 0;
-		} else {
-			/* there is no page here - so we have a hole, a bigger
-			 * one if we already had one
-			 */
-			if(holev == NO_MEM) {
-				holev = curv;
-				holesize = 1;
-			} else holesize++;
+#if defined(__i386__)
+		if(!(pt->pt_dir[pde] & ARCH_VM_PDE_PRESENT) ||
+		   !(pt->pt_pt[pde][pte] & ARCH_VM_PAGE_PRESENT)) {
+#elif defined(__arm__)
+		    pde = ARM_VM_PDE(curv);
+		    pte = ARM_VM_PTE(curv);
 
-			assert(holesize > 0);
-			assert(holesize <= pages);
+		    /* if page present, no hole */
+		    if((pt->pt_dir[pde] & ARCH_VM_PDE_PRESENT) &&
+		       (pt->pt_pt[pde][pte] & ARCH_VM_PTE_PRESENT))
+			nohole = 1;
 
-			/* if it's big enough, return it */
-			if(holesize == pages) {
-				lastv = curv + VM_PAGE_SIZE;
-				return holev;
-			}
+		    /* if not contiguous, no hole */
+		    if (curv != holev + i * VM_PAGE_SIZE)
+			nohole = 1;
+
+		    curv+=VM_PAGE_SIZE;
 		}
 
+		/* there's a large enough hole */
+		if (!nohole && i == pages) {
+#endif
+			lastv = curv;
+#if defined(__i386__)
+			return curv;
+#elif defined(__arm__)
+			return holev;
+#endif
+		}
+
+#if defined(__i386__)
 		curv+=VM_PAGE_SIZE;
 
-		/* if we reached the limit, start scanning from the beginning if
-		 * we haven't looked there yet
-		 */
+#elif defined(__arm__)
+		/* Reset curv */
+#endif
 		if(curv >= vmax && try_restart) {
-			try_restart = 0;
 			curv = vmin;
+			try_restart = 0;
 		}
 	}
 
@@ -254,13 +283,21 @@ void vm_freepages(vir_bytes vir, int pages)
  *===========================================================================*/
 static void *vm_getsparepage(phys_bytes *phys)
 {
-	void *ptr;
-	if(reservedqueue_alloc(spare_pagequeue, phys, &ptr) != OK) {
-		printf("vm_getsparepage: no spare found\n");
-		return NULL;
+	int s;
+	assert(missing_spares >= 0 && missing_spares <= SPAREPAGES);
+	for(s = 0; s < SPAREPAGES; s++) {
+		if(sparepages[s].page) {
+			void *sp;
+			sp = sparepages[s].page;
+			*phys = sparepages[s].phys;
+			sparepages[s].page = NULL;
+			missing_spares++;
+			assert(missing_spares >= 0 && missing_spares <= SPAREPAGES);
+			return sp;
+		}
 	}
-	assert(ptr);
-	return ptr;
+	printf("no spare found, %d missing\n", missing_spares);
+	return NULL;
 }
 
 /*===========================================================================*
@@ -284,37 +321,31 @@ static void *vm_getsparepagedir(phys_bytes *phys)
 	return NULL;
 }
 
-void *vm_mappages(phys_bytes p, int pages)
+/*===========================================================================*
+ *				vm_checkspares		     		     *
+ *===========================================================================*/
+static void *vm_checkspares(void)
 {
-	vir_bytes loc;
-	int r;
-	pt_t *pt = &vmprocess->vm_pt;
-
-	/* Where in our virtual address space can we put it? */
-	loc = findhole(pages);
-	if(loc == NO_MEM) {
-		printf("vm_mappages: findhole failed\n");
-		return NULL;
+	int s, n = 0;
+	static int total = 0, worst = 0;
+	assert(missing_spares >= 0 && missing_spares <= SPAREPAGES);
+	for(s = 0; s < SPAREPAGES && missing_spares > 0; s++) {
+	    if(!sparepages[s].page) {
+		n++;
+		if((sparepages[s].page = vm_allocpage(&sparepages[s].phys, 
+			VMP_SPARE))) {
+			missing_spares--;
+			assert(missing_spares >= 0);
+			assert(missing_spares <= SPAREPAGES);
+		} else {
+			printf("VM: warning: couldn't get new spare page\n");
+		}
+	   }
 	}
+	if(worst < n) worst = n;
+	total += n;
 
-	/* Map this page into our address space. */
-	if((r=pt_writemap(vmprocess, pt, loc, p, VM_PAGE_SIZE*pages,
-		ARCH_VM_PTE_PRESENT | ARCH_VM_PTE_USER | ARCH_VM_PTE_RW
-#if defined(__arm__)
-		| ARM_VM_PTE_WT
-#endif
-		, 0)) != OK) {
-		printf("vm_mappages writemap failed\n");
-		return NULL;
-	}
-
-	if((r=sys_vmctl(SELF, VMCTL_FLUSHTLB, 0)) != OK) {
-		panic("VMCTL_FLUSHTLB failed: %d", r);
-	}
-
-	assert(loc);
-
-	return (void *) loc;
+	return NULL;
 }
 
 static int pt_init_done;
@@ -326,10 +357,14 @@ void *vm_allocpages(phys_bytes *phys, int reason, int pages)
 {
 /* Allocate a page for use by VM itself. */
 	phys_bytes newpage;
+	vir_bytes loc;
+	pt_t *pt;
+	int r;
 	static int level = 0;
 	void *ret;
 	u32_t mem_flags = 0;
 
+	pt = &vmprocess->vm_pt;
 	assert(reason >= 0 && reason < VMP_CATEGORIES);
 
 	assert(pages > 0);
@@ -361,6 +396,16 @@ void *vm_allocpages(phys_bytes *phys, int reason, int pages)
 	}
 #endif
 
+	/* VM does have a pagetable, so get a page and map it in there.
+	 * Where in our virtual address space can we put it?
+	 */
+	loc = findhole(pages);
+	if(loc == NO_MEM) {
+		level--;
+		printf("VM: vm_allocpage: findhole failed\n");
+		return NULL;
+	}
+
 	/* Allocate page of memory for use by VM. As VM
 	 * is trusted, we don't have to pre-clear it.
 	 */
@@ -372,15 +417,29 @@ void *vm_allocpages(phys_bytes *phys, int reason, int pages)
 
 	*phys = CLICK2ABS(newpage);
 
-	if(!(ret = vm_mappages(*phys, pages))) {
+	/* Map this page into our address space. */
+	if((r=pt_writemap(vmprocess, pt, loc, *phys, VM_PAGE_SIZE*pages,
+		ARCH_VM_PTE_PRESENT | ARCH_VM_PTE_USER | ARCH_VM_PTE_RW
+#if defined(__arm__)
+		| ARM_VM_PTE_WB | ARM_VM_PTE_SHAREABLE
+#endif
+		, 0)) != OK) {
+		free_mem(newpage, pages);
+		printf("vm_allocpage writemap failed\n");
 		level--;
-		printf("VM: vm_allocpage: vm_mappages failed\n");
 		return NULL;
 	}
 
-	level--;
-	vm_self_pages++;
+	if((r=sys_vmctl(SELF, VMCTL_FLUSHTLB, 0)) != OK) {
+		panic("VMCTL_FLUSHTLB failed: %d", r);
+	}
 
+	level--;
+
+	/* Return user-space-ready pointer to it. */
+	ret = (void *) loc;
+
+	vm_self_pages++;
 	return ret;
 }
 
@@ -409,7 +468,7 @@ void vm_pagelock(void *vir, int lockflag)
 #if defined(__arm__)
 	else
 		flags |= ARCH_VM_PTE_RO;
-	flags |= ARM_VM_PTE_WT ;
+	flags |= ARM_VM_PTE_WB | ARM_VM_PTE_SHAREABLE;
 #endif
 
 	/* Update flags. */
@@ -434,8 +493,13 @@ int vm_addrok(void *vir, int writeflag)
 	int pde, pte;
 	vir_bytes v = (vir_bytes) vir;
 
-	pde = ARCH_VM_PDE(v);
-	pte = ARCH_VM_PTE(v);
+#if defined(__i386__)
+	pde = I386_VM_PDE(v);
+	pte = I386_VM_PTE(v);
+#elif defined(__arm__)
+	pde = ARM_VM_PDE(v);
+	pte = ARM_VM_PTE(v);
+#endif
 
 	if(!(pt->pt_dir[pde] & ARCH_VM_PDE_PRESENT)) {
 		printf("addr not ok: missing pde %d\n", pde);
@@ -445,12 +509,6 @@ int vm_addrok(void *vir, int writeflag)
 #if defined(__i386__)
 	if(writeflag &&
 		!(pt->pt_dir[pde] & ARCH_VM_PTE_RW)) {
-		printf("addr not ok: pde %d present but pde unwritable\n", pde);
-		return 0;
-	}
-#elif defined(__arm__)
-	if(writeflag &&
-		 (pt->pt_dir[pde] & ARCH_VM_PTE_RO)) {
 		printf("addr not ok: pde %d present but pde unwritable\n", pde);
 		return 0;
 	}
@@ -466,13 +524,12 @@ int vm_addrok(void *vir, int writeflag)
 	if(writeflag &&
 		!(pt->pt_pt[pde][pte] & ARCH_VM_PTE_RW)) {
 		printf("addr not ok: pde %d / pte %d present but unwritable\n",
-			pde, pte);
 #elif defined(__arm__)
-	if(writeflag &&
-		 (pt->pt_pt[pde][pte] & ARCH_VM_PTE_RO)) {
-		printf("addr not ok: pde %d / pte %d present but unwritable\n",
-			pde, pte);
+	if(!writeflag &&
+		!(pt->pt_pt[pde][pte] & ARCH_VM_PTE_RO)) {
+		printf("addr not ok: pde %d / pte %d present but writable\n",
 #endif
+			pde, pte);
 		return 0;
 	}
 
@@ -514,7 +571,7 @@ static int pt_ptalloc(pt_t *pt, int pde, u32_t flags)
 		| ARCH_VM_PDE_PRESENT | ARCH_VM_PTE_USER | ARCH_VM_PTE_RW;
 #elif defined(__arm__)
 	pt->pt_dir[pde] = (pt_phys & ARCH_VM_PDE_MASK)
-		| ARCH_VM_PDE_PRESENT | ARM_VM_PDE_DOMAIN; //LSC FIXME
+		| ARCH_VM_PDE_PRESENT | ARM_VM_PDE_DOMAIN;
 #endif
 
 	return OK;
@@ -529,9 +586,13 @@ int pt_ptalloc_in_range(pt_t *pt, vir_bytes start, vir_bytes end,
 /* Allocate all the page tables in the range specified. */
 	int pde, first_pde, last_pde;
 
-	first_pde = ARCH_VM_PDE(start);
-	last_pde = ARCH_VM_PDE(end-1);
-
+#if defined(__i386__)
+	first_pde = I386_VM_PDE(start);
+	last_pde = I386_VM_PDE(end-1);
+#elif defined(__arm__)
+	first_pde = ARM_VM_PDE(start);
+	last_pde = ARM_VM_PDE(end-1);
+#endif
 	assert(first_pde >= 0);
 	assert(last_pde < ARCH_VM_DIR_ENTRIES);
 
@@ -565,7 +626,7 @@ int pt_ptalloc_in_range(pt_t *pt, vir_bytes start, vir_bytes end,
 	return OK;
 }
 
-static const char *ptestr(u32_t pte)
+static char *ptestr(u32_t pte)
 {
 #define FLAG(constant, name) {						\
 	if(pte & (constant)) { strcat(str, name); strcat(str, " "); }	\
@@ -598,7 +659,7 @@ static const char *ptestr(u32_t pte)
 	FLAG(I386_VM_PTAVAIL3, "AV3");
 #elif defined(__arm__)
 	FLAG(ARM_VM_PTE_SUPER, "S");
-	FLAG(ARM_VM_PTE_S, "SH");
+	FLAG(ARM_VM_PTE_SHAREABLE, "SH");
 	FLAG(ARM_VM_PTE_WB, "WB");
 	FLAG(ARM_VM_PTE_WT, "WT");
 #endif
@@ -625,26 +686,43 @@ int pt_map_in_range(struct vmproc *src_vmp, struct vmproc *dst_vmp,
 	end = end ? end : VM_DATATOP;
 	assert(start % VM_PAGE_SIZE == 0);
 	assert(end % VM_PAGE_SIZE == 0);
-
-	assert( /* ARCH_VM_PDE(start) >= 0 && */ start <= end);
-	assert(ARCH_VM_PDE(end) < ARCH_VM_DIR_ENTRIES);
+#if defined(__i386__)
+	assert(start <= end);
+	assert(I386_VM_PDE(end) < ARCH_VM_DIR_ENTRIES);
+#elif defined(__arm__)
+	assert(ARM_VM_PDE(start) >= 0 && start <= end);
+	assert(ARM_VM_PDE(end) < ARCH_VM_DIR_ENTRIES);
+#endif
 
 #if LU_DEBUG
 	printf("VM: pt_map_in_range: src = %d, dst = %d\n",
 		src_vmp->vm_endpoint, dst_vmp->vm_endpoint);
 	printf("VM: pt_map_in_range: transferring from 0x%08x (pde %d pte %d) to 0x%08x (pde %d pte %d)\n",
-		start, ARCH_VM_PDE(start), ARCH_VM_PTE(start),
-		end, ARCH_VM_PDE(end), ARCH_VM_PTE(end));
+#if defined(__i386__)
+		start, I386_VM_PDE(start), I386_VM_PTE(start),
+		end, I386_VM_PDE(end), I386_VM_PTE(end));
+#elif defined(__arm__)
+		start, ARM_VM_PDE(start), ARM_VM_PTE(start),
+		end, ARM_VM_PDE(end), ARM_VM_PTE(end));
+#endif
 #endif
 
 	/* Scan all page-table entries in the range. */
 	for(viraddr = start; viraddr <= end; viraddr += VM_PAGE_SIZE) {
-		pde = ARCH_VM_PDE(viraddr);
+#if defined(__i386__)
+		pde = I386_VM_PDE(viraddr);
+#elif defined(__arm__)
+		pde = ARM_VM_PDE(viraddr);
+#endif
 		if(!(pt->pt_dir[pde] & ARCH_VM_PDE_PRESENT)) {
 			if(viraddr == VM_DATATOP) break;
 			continue;
 		}
-		pte = ARCH_VM_PTE(viraddr);
+#if defined(__i386__)
+		pte = I386_VM_PTE(viraddr);
+#elif defined(__arm__)
+		pte = ARM_VM_PTE(viraddr);
+#endif
 		if(!(pt->pt_pt[pde][pte] & ARCH_VM_PTE_PRESENT)) {
 			if(viraddr == VM_DATATOP) break;
 			continue;
@@ -688,8 +766,8 @@ int pt_ptmap(struct vmproc *src_vmp, struct vmproc *dst_vmp)
 		ARCH_VM_PTE_PRESENT | ARCH_VM_PTE_USER | ARCH_VM_PTE_RW,
 #elif defined(__arm__)
 	if((r=pt_writemap(dst_vmp, &dst_vmp->vm_pt, viraddr, physaddr, ARCH_PAGEDIR_SIZE,
-		ARCH_VM_PTE_PRESENT | ARCH_VM_PTE_USER |
-		ARM_VM_PTE_WT ,
+		ARCH_VM_PTE_PRESENT | ARCH_VM_PTE_USER | ARCH_VM_PTE_RW |
+		ARM_VM_PTE_WB | ARM_VM_PTE_SHAREABLE,
 #endif
 		WMF_OVERWRITE)) != OK) {
 		return r;
@@ -715,7 +793,8 @@ int pt_ptmap(struct vmproc *src_vmp, struct vmproc *dst_vmp)
 		if((r=pt_writemap(dst_vmp, &dst_vmp->vm_pt, viraddr, physaddr, VM_PAGE_SIZE,
 			ARCH_VM_PTE_PRESENT | ARCH_VM_PTE_USER | ARCH_VM_PTE_RW
 #ifdef __arm__
-			| ARM_VM_PTE_WT
+			| ARCH_VM_PTE_PRESENT | ARCH_VM_PTE_USER | ARCH_VM_PTE_RW |
+			ARM_VM_PTE_WB | ARM_VM_PTE_SHAREABLE
 #endif
 			,
 			WMF_OVERWRITE)) != OK) {
@@ -734,26 +813,6 @@ void pt_clearmapcache(void)
 	 */
 	if(sys_vmctl(SELF, VMCTL_CLEARMAPCACHE, 0) != OK)
 		panic("VMCTL_CLEARMAPCACHE failed");
-}
-
-int pt_writable(struct vmproc *vmp, vir_bytes v)
-{
-	u32_t entry;
-	pt_t *pt = &vmp->vm_pt;
-	assert(!(v % VM_PAGE_SIZE));
-	int pde = ARCH_VM_PDE(v);
-	int pte = ARCH_VM_PTE(v);
-
-	assert(pt->pt_dir[pde] & ARCH_VM_PDE_PRESENT);
-	assert(pt->pt_pt[pde]);
-
-	entry = pt->pt_pt[pde][pte];
-
-#if defined(__i386__)
-	return((entry & PTF_WRITE) ? 1 : 0);
-#elif defined(__arm__)
-	return((entry & ARCH_VM_PTE_RO) ? 0 : 1);
-#endif
 }
 
 /*===========================================================================*
@@ -815,8 +874,13 @@ int pt_writemap(struct vmproc * vmp,
 	/* Now write in them. */
 	for(p = 0; p < pages; p++) {
 		u32_t entry;
-		int pde = ARCH_VM_PDE(v);
-		int pte = ARCH_VM_PTE(v);
+#if defined(__i386__)
+		int pde = I386_VM_PDE(v);
+		int pte = I386_VM_PTE(v);
+#elif defined(__arm__)
+		int pde = ARM_VM_PDE(v);
+		int pte = ARM_VM_PTE(v);
+#endif
 
 		assert(!(v % VM_PAGE_SIZE));
 		assert(pte >= 0 && pte < ARCH_VM_PT_ENTRIES);
@@ -874,7 +938,6 @@ int pt_writemap(struct vmproc * vmp,
 				/* If we expect a writable page, allow a readonly page. */
 				maskedentry &= ~ARCH_VM_PTE_RO;
 			}
-			maskedentry &= ~(ARM_VM_PTE_WB|ARM_VM_PTE_WT);
 #endif
 			if(maskedentry != entry) {
 				printf("pt_writemap: mismatch: ");
@@ -933,8 +996,13 @@ int pt_checkrange(pt_t *pt, vir_bytes v,  size_t bytes,
 	pages = bytes / VM_PAGE_SIZE;
 
 	for(p = 0; p < pages; p++) {
-		int pde = ARCH_VM_PDE(v);
-		int pte = ARCH_VM_PTE(v);
+#if defined(__i386__)
+		int pde = I386_VM_PDE(v);
+		int pte = I386_VM_PTE(v);
+#elif defined(__arm__)
+		int pde = ARM_VM_PDE(v);
+		int pte = ARM_VM_PTE(v);
+#endif
 
 		assert(!(v % VM_PAGE_SIZE));
 		assert(pte >= 0 && pte < ARCH_VM_PT_ENTRIES);
@@ -1080,17 +1148,21 @@ void pt_init(void)
         }
 #endif
 
-	if(!(spare_pagequeue = reservedqueue_new(SPAREPAGES, 1, 1, 0)))
-		panic("reservedqueue_new for single pages failed");
-
+        missing_spares = 0;
         assert(STATIC_SPAREPAGES < SPAREPAGES);
-        for(s = 0; s < STATIC_SPAREPAGES; s++) {
-		void *v = (void *) (sparepages_mem + s*VM_PAGE_SIZE);
+        for(s = 0; s < SPAREPAGES; s++) {
+		vir_bytes v = (sparepages_mem + s*VM_PAGE_SIZE);;
 		phys_bytes ph;
 		if((r=sys_umap(SELF, VM_D, (vir_bytes) v,
 	                VM_PAGE_SIZE*SPAREPAGES, &ph)) != OK)
 				panic("pt_init: sys_umap failed: %d", r);
-		reservedqueue_add(spare_pagequeue, v, ph);
+        	if(s >= STATIC_SPAREPAGES) {
+        		sparepages[s].page = NULL;
+        		missing_spares++;
+        		continue;
+        	}
+        	sparepages[s].page = (void *) v;
+        	sparepages[s].phys = ph;
         }
 
 #if defined(__i386__)
@@ -1107,57 +1179,64 @@ void pt_init(void)
 	{
 		int kernmap_pde;
 		phys_bytes addr, len;
-		int flags, pindex = 0;
+		int flags, index = 0;
 		u32_t offset = 0;
 
 		kernmap_pde = freepde();
 		offset = kernmap_pde * ARCH_BIG_PAGE_SIZE;
 
-		while(sys_vmctl_get_mapping(pindex, &addr, &len,
+		while(sys_vmctl_get_mapping(index, &addr, &len,
 			&flags) == OK)  {
 			int usedpde;
 			vir_bytes vir;
-			if(pindex >= MAX_KERNMAPPINGS)
-                		panic("VM: too many kernel mappings: %d", pindex);
-			kern_mappings[pindex].phys_addr = addr;
-			kern_mappings[pindex].len = len;
-			kern_mappings[pindex].flags = flags;
-			kern_mappings[pindex].vir_addr = offset;
-			kern_mappings[pindex].flags =
+			if(index >= MAX_KERNMAPPINGS)
+                		panic("VM: too many kernel mappings: %d", index);
+			kern_mappings[index].phys_addr = addr;
+			kern_mappings[index].len = len;
+			kern_mappings[index].flags = flags;
+			kern_mappings[index].vir_addr = offset;
+			kern_mappings[index].flags =
 				ARCH_VM_PTE_PRESENT;
 			if(flags & VMMF_UNCACHED)
 #if defined(__i386__)
-				kern_mappings[pindex].flags |= PTF_NOCACHE;
+				kern_mappings[index].flags |= PTF_NOCACHE;
 #elif defined(__arm__)
-				kern_mappings[pindex].flags |= ARM_VM_PTE_DEVICE;
+				kern_mappings[index].flags |= ARM_VM_PTE_DEVICE;
+			else
+				kern_mappings[index].flags |=
+				    ARM_VM_PTE_WB | ARM_VM_PTE_SHAREABLE;
 #endif
 			if(flags & VMMF_USER)
-				kern_mappings[pindex].flags |= ARCH_VM_PTE_USER;
+				kern_mappings[index].flags |= ARCH_VM_PTE_USER;
 #if defined(__arm__)
 			else
-				kern_mappings[pindex].flags |= ARM_VM_PTE_SUPER;
+				kern_mappings[index].flags |= ARM_VM_PTE_SUPER;
 #endif
 			if(flags & VMMF_WRITE)
-				kern_mappings[pindex].flags |= ARCH_VM_PTE_RW;
+				kern_mappings[index].flags |= ARCH_VM_PTE_RW;
 #if defined(__i386__)
 			if(flags & VMMF_GLO)
-				kern_mappings[pindex].flags |= I386_VM_GLOBAL;
+				kern_mappings[index].flags |= I386_VM_GLOBAL;
 #elif defined(__arm__)
 			else
-				kern_mappings[pindex].flags |= ARCH_VM_PTE_RO;
+				kern_mappings[index].flags |= ARCH_VM_PTE_RO;
 #endif
 			if(addr % VM_PAGE_SIZE)
-                		panic("VM: addr unaligned: %lu", addr);
+                		panic("VM: addr unaligned: %d", addr);
 			if(len % VM_PAGE_SIZE)
-                		panic("VM: len unaligned: %lu", len);
+                		panic("VM: len unaligned: %d", len);
 			vir = offset;
-			if(sys_vmctl_reply_mapping(pindex, vir) != OK)
+			if(sys_vmctl_reply_mapping(index, vir) != OK)
                 		panic("VM: reply failed");
 			offset += len;
-			pindex++;
+			index++;
 			kernmappings++;
 
-			usedpde = ARCH_VM_PDE(offset);
+#if defined(__i386__)
+			usedpde = I386_VM_PDE(offset);
+#elif defined(__arm__)
+			usedpde = ARM_VM_PDE(offset);
+#endif
 			while(usedpde > kernmap_pde) {
 				int newpde = freepde();
 				assert(newpde == kernmap_pde+1);
@@ -1188,9 +1267,8 @@ void pt_init(void)
 			pdm->val = (ph & ARCH_VM_ADDR_MASK) |
 				ARCH_VM_PDE_PRESENT | ARCH_VM_PTE_RW;
 #elif defined(__arm__)
-			pdm->val = (ph & ARCH_VM_PDE_MASK)
-				| ARCH_VM_PDE_PRESENT
-				| ARM_VM_PDE_DOMAIN; //LSC FIXME
+			pdm->val = (ph & ARCH_VM_PDE_MASK) |
+				ARCH_VM_PDE_PRESENT | ARM_VM_PDE_DOMAIN;
 #endif
 		}
 	}
@@ -1262,6 +1340,8 @@ void pt_init(void)
 
 	pt_init_done = 1;
 
+	vm_checkspares();
+
         /* All OK. */
         return;
 }
@@ -1312,10 +1392,9 @@ int pt_bind(pt_t *pt, struct vmproc *who)
 	int i;
 	for (i = 0; i < pages_per_pagedir; i++) {
 		pdm->page_directories[pdeslot*pages_per_pagedir+i] =
-			(phys+i*VM_PAGE_SIZE)
-			| ARCH_VM_PTE_PRESENT
-			| ARCH_VM_PTE_RW
-			| ARCH_VM_PTE_USER; //LSC FIXME
+			(phys+i*VM_PAGE_SIZE) |
+			ARCH_VM_PTE_PRESENT | ARCH_VM_PTE_RW |
+			ARCH_VM_PTE_USER;
 	}
 }
 #endif
@@ -1330,6 +1409,10 @@ int pt_bind(pt_t *pt, struct vmproc *who)
 			pdeslot * ARCH_PAGEDIR_SIZE);
 #endif
 
+#if 0
+	printf("VM: slot %d endpoint %d has pde val 0x%lx at kernel address 0x%lx\n",
+		slot, who->vm_endpoint, page_directories[slot], pdes);
+#endif
 	/* Tell kernel about new page table root. */
 	return sys_vmctl_set_addrspace(who->vm_endpoint, pt->pt_dir_phys, pdes);
 }
@@ -1371,11 +1454,10 @@ int pt_mapkernel(pt_t *pt)
 		pt->pt_dir[kern_pde] = addr | ARCH_VM_PDE_PRESENT |
 			ARCH_VM_BIGPAGE | ARCH_VM_PTE_RW | global_bit;
 #elif defined(__arm__)
-		pt->pt_dir[kern_pde] = (addr & ARCH_VM_PDE_MASK)
-			| ARM_VM_SECTION
-			| ARM_VM_SECTION_DOMAIN
-			| ARM_VM_SECTION_WT
-			| ARM_VM_SECTION_SUPER;
+		pt->pt_dir[kern_pde] = (addr & ARCH_VM_PDE_MASK) |
+			ARM_VM_SECTION |
+			ARM_VM_SECTION_DOMAIN | ARM_VM_SECTION_WB |
+			ARM_VM_SECTION_SHAREABLE | ARM_VM_SECTION_SUPER;
 #endif
 		kern_pde++;
 		mapped += ARCH_BIG_PAGE_SIZE;
@@ -1405,9 +1487,28 @@ int pt_mapkernel(pt_t *pt)
 			return r;
 		}
 
+#if defined(__arm__)
+		if(kern_mappings[i].phys_addr == 0x48000000) {
+			if((r=pt_writemap(NULL, pt,
+				kern_mappings[i].phys_addr,
+				kern_mappings[i].phys_addr,
+				kern_mappings[i].len,
+				kern_mappings[i].flags, 0)) != OK) {
+				return r;
+			}
+		}
+#endif
 	}
 
 	return OK;
+}
+
+/*===========================================================================*
+ *				pt_cycle		     		     *
+ *===========================================================================*/
+void pt_cycle(void)
+{
+	vm_checkspares();
 }
 
 int get_vm_self_pages(void) { return vm_self_pages; }

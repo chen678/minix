@@ -1,9 +1,9 @@
 
 /* This file contains some utility routines for VM.  */
 
-#define _SYSTEM		1
+#define _SYSTEM 1
 
-#define brk _brk	/* get rid of no previous prototype warning */
+#define _MINIX 1	/* To get the brk() prototype (as _brk()). */
 
 #include <minix/callnr.h>
 #include <minix/com.h>
@@ -25,7 +25,6 @@
 #include <assert.h>
 #include <sys/param.h>
 #include <sys/mman.h>
-#include <sys/resource.h>
 
 #include "proto.h"
 #include "glo.h"
@@ -42,26 +41,20 @@
 /*===========================================================================*
  *                              get_mem_chunks                               *
  *===========================================================================*/
-void get_mem_chunks(
-struct memory *mem_chunks)                      /* store mem chunks here */ 
+void get_mem_chunks(mem_chunks)
+struct memory *mem_chunks;                      /* store mem chunks here */ 
 {  
-/* Initialize the free memory list from the kernel-provided memory map.  Translate
+/* Initialize the free memory list from the 'memory' boot variable.  Translate
  * the byte offsets and sizes in this list to clicks, properly truncated.
  */
   phys_bytes base, size, limit;
   int i;
   struct memory *memp;
 
-  /* Initialize everything to zero. */
-  memset(mem_chunks, 0, NR_MEMS*sizeof(*mem_chunks));
-
-  /* Obtain and parse memory from kernel environment. */
-  /* XXX Any memory chunk in excess of NR_MEMS is silently ignored. */
-  for(i = 0; i < MIN(MAXMEMMAP, NR_MEMS); i++) {
-  	mem_chunks[i].base = kernel_boot_info.memmap[i].addr;
-  	mem_chunks[i].size = kernel_boot_info.memmap[i].len;
-  }
-
+  /* Obtain and parse memory from system environment. */
+  if(env_memory_parse(mem_chunks, NR_MEMS) != OK) 
+        panic("couldn't obtain memory chunks"); 
+        
   /* Round physical memory to clicks. Round start up, round end down. */
   for (i = 0; i < NR_MEMS; i++) {
         memp = &mem_chunks[i];          /* next mem chunk is stored here */
@@ -82,14 +75,14 @@ struct memory *mem_chunks)                      /* store mem chunks here */
 /*===========================================================================*
  *                              vm_isokendpt                           	     *
  *===========================================================================*/
-int vm_isokendpt(endpoint_t endpoint, int *procn)
+int vm_isokendpt(endpoint_t endpoint, int *proc)
 {
-        *procn = _ENDPOINT_P(endpoint);
-        if(*procn < 0 || *procn >= NR_PROCS)
+        *proc = _ENDPOINT_P(endpoint);
+        if(*proc < 0 || *proc >= NR_PROCS)
 		return EINVAL;
-        if(*procn >= 0 && endpoint != vmproc[*procn].vm_endpoint)
+        if(*proc >= 0 && endpoint != vmproc[*proc].vm_endpoint)
                 return EDEADEPT;
-        if(*procn >= 0 && !(vmproc[*procn].vm_flags & VMF_INUSE))
+        if(*proc >= 0 && !(vmproc[*proc].vm_flags & VMF_INUSE))
                 return EDEADEPT;
         return OK;
 }
@@ -170,7 +163,7 @@ int do_info(message *m)
 	 * deadlock. Note that no memory mapping can be undone without the
 	 * involvement of VM, so we are safe until we're done.
 	 */
-	r = handle_memory(vmp, ptr, size, 1 /*wrflag*/, NULL, NULL, 0);
+	r = handle_memory(vmp, ptr, size, 1 /*wrflag*/);
 	if (r != OK) return r;
 
 	/* Now that we know the copy out will succeed, perform the actual copy
@@ -293,7 +286,7 @@ int minix_munmap(void * addr, size_t len)
 	return 0;
 }
 
-int brk(void *addr)
+int _brk(void *addr)
 {
 	vir_bytes target = roundup((vir_bytes)addr, VM_PAGE_SIZE), v;
 	extern char _end;
@@ -307,14 +300,8 @@ int brk(void *addr)
 		if(newpage == NO_MEM) return -1;
 		mem = CLICK2ABS(newpage);
 		if(pt_writemap(vmprocess, &vmprocess->vm_pt,
-			v, mem, VM_PAGE_SIZE,
-			  ARCH_VM_PTE_PRESENT
-			| ARCH_VM_PTE_USER
-			| ARCH_VM_PTE_RW
-#if defined(__arm__)
-			| ARM_VM_PTE_WB
-#endif
-			, 0) != OK) {
+	v, mem, VM_PAGE_SIZE,
+        ARCH_VM_PTE_PRESENT | ARCH_VM_PTE_USER | ARCH_VM_PTE_RW, 0) != OK) {
 			free_mem(newpage, 1);
 			return -1;
 		}
@@ -329,27 +316,4 @@ int brk(void *addr)
 	return 0;
 }
 
-/*===========================================================================*
- *				do_getrusage		     		     *
- *===========================================================================*/
-int do_getrusage(message *m)
-{
-	int res, slot;
-	struct vmproc *vmp;
-	struct rusage r_usage;
-	if ((res = vm_isokendpt(m->m_source, &slot)) != OK)
-		return ESRCH;
 
-	vmp = &vmproc[slot];
-
-	if ((res = sys_datacopy(m->m_source, (vir_bytes) m->RU_RUSAGE_ADDR,
-		SELF, (vir_bytes) &r_usage, (vir_bytes) sizeof(r_usage))) < 0)
-		return res;
-
-	r_usage.ru_maxrss = vmp->vm_total_max;
-	r_usage.ru_minflt = vmp->vm_minor_page_fault;
-	r_usage.ru_majflt = vmp->vm_major_page_fault;
-
-	return sys_datacopy(SELF, (vir_bytes) &r_usage, m->m_source,
-		(vir_bytes) m->RU_RUSAGE_ADDR, (vir_bytes) sizeof(r_usage));
-}

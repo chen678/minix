@@ -991,6 +991,23 @@
 #	define VMUM_ADDR		m1_p1
 #	define VMUM_LEN			m1_i1
 
+/* To VM: forget all my yielded blocks. */
+#define VM_FORGETBLOCKS		(VM_RQ_BASE+22)
+
+/* To VM: forget this block. */
+#define VM_FORGETBLOCK		(VM_RQ_BASE+23)
+#define VMFB_IDHI			m1_i1
+#define VMFB_IDLO			m1_i2
+
+/* To VM: combined yield+get call. */
+#define VM_YIELDBLOCKGETBLOCK	(VM_RQ_BASE+25)
+#define VMYBGB_VADDR			m2_p1
+#define VMYBGB_GETIDHI			m2_i1
+#define VMYBGB_GETIDLO			m2_i2
+#define VMYBGB_LEN			m2_i3
+#define VMYBGB_YIELDIDHI		m2_l1
+#define VMYBGB_YIELDIDLO		m2_l2
+
 /* To VM: map in cache block by FS */
 #define VM_MAPCACHEPAGE		(VM_RQ_BASE+26)
 

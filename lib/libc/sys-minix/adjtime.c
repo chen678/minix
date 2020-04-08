@@ -1,6 +1,6 @@
 #include <sys/cdefs.h>
-#include <lib.h>
 #include "namespace.h"
+#include <lib.h>
 
 #include <sys/time.h>
 #include <time.h>

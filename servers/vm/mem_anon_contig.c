@@ -8,11 +8,10 @@
 #include "region.h"
 #include "glo.h"
 
-static int anon_contig_reference(struct phys_region *, struct phys_region *);
+static int anon_contig_reference(struct phys_region *pr);
 static int anon_contig_unreference(struct phys_region *pr);
 static int anon_contig_pagefault(struct vmproc *vmp, struct vir_region *region, 
-	struct phys_region *ph, int write, vfs_callback_t cb, void *state,
-	int len, int *io);
+	struct phys_region *ph, int write);
 static int anon_contig_sanitycheck(struct phys_region *pr, char *file, int line);
 static int anon_contig_writable(struct phys_region *pr);
 static int anon_contig_resize(struct vmproc *vmp, struct vir_region *vr, vir_bytes l);
@@ -30,8 +29,7 @@ struct mem_type mem_type_anon_contig = {
 };
 
 static int anon_contig_pagefault(struct vmproc *vmp, struct vir_region *region,
-	struct phys_region *ph, int write, vfs_callback_t cb, void *state,
-	int len, int *io)
+	struct phys_region *ph, int write)
 {
 	panic("anon_contig_pagefault: pagefault cannot happen");
 }
@@ -40,7 +38,7 @@ static int anon_contig_new(struct vir_region *region)
 {
         u32_t allocflags;
 	phys_bytes new_pages, new_page_cl, cur_ph;
-	phys_bytes p, pages;
+	int p, pages;
 
         allocflags = vrallocflags(region->flags);
 
@@ -52,7 +50,7 @@ static int anon_contig_new(struct vir_region *region)
 		struct phys_block *pb = pb_new(MAP_NONE);
 		struct phys_region *pr = NULL;
 		if(pb)
-			pr = pb_reference(pb, p * VM_PAGE_SIZE, region, &mem_type_anon_contig);
+			pr = pb_reference(pb, p * VM_PAGE_SIZE, region);
 		if(!pr) {
 			if(pb) pb_free(pb);
 			map_free(region);
@@ -87,8 +85,7 @@ static int anon_contig_resize(struct vmproc *vmp, struct vir_region *vr, vir_byt
 	return ENOMEM;
 }
 
-static int anon_contig_reference(struct phys_region *pr,
-	struct phys_region *newpr)
+static int anon_contig_reference(struct phys_region *pr)
 {
 	printf("VM: cannot fork with physically contig memory.\n");
 	return ENOMEM;

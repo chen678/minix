@@ -17,13 +17,10 @@
  * pointers.
  */
 
-static void anon_split(struct vmproc *vmp, struct vir_region *vr,
-			struct vir_region *r1, struct vir_region *r2);
-static int anon_lowshrink(struct vir_region *vr, vir_bytes len);
+static int anon_reference(struct phys_region *pr);
 static int anon_unreference(struct phys_region *pr);
 static int anon_pagefault(struct vmproc *vmp, struct vir_region *region, 
-	struct phys_region *ph, int write, vfs_callback_t cb, void *state,
-	int len, int *io);
+	struct phys_region *ph, int write);
 static int anon_sanitycheck(struct phys_region *pr, char *file, int line);
 static int anon_writable(struct phys_region *pr);
 static int anon_resize(struct vmproc *vmp, struct vir_region *vr, vir_bytes l);
@@ -32,16 +29,20 @@ static int anon_refcount(struct vir_region *vr);
 
 struct mem_type mem_type_anon = {
 	.name = "anonymous memory",
+	.ev_reference = anon_reference,
 	.ev_unreference = anon_unreference,
 	.ev_pagefault = anon_pagefault,
 	.ev_resize = anon_resize,
 	.ev_sanitycheck = anon_sanitycheck,
-	.ev_lowshrink = anon_lowshrink,
-	.ev_split = anon_split,
 	.regionid = anon_regionid,
 	.writable = anon_writable,
 	.refcount = anon_refcount
 };
+
+static int anon_reference(struct phys_region *pr)
+{
+	return OK;
+}
 
 static int anon_unreference(struct phys_region *pr)
 {
@@ -52,20 +53,18 @@ static int anon_unreference(struct phys_region *pr)
 }
 
 static int anon_pagefault(struct vmproc *vmp, struct vir_region *region,
-	struct phys_region *ph, int write, vfs_callback_t cb, void *state,
-	int len, int *io)
+	struct phys_region *ph, int write)
 {
 	phys_bytes new_page, new_page_cl;
+	struct phys_block *pb;
 	u32_t allocflags;
 
 	allocflags = vrallocflags(region->flags);
 
 	assert(ph->ph->refcount > 0);
 
-	if((new_page_cl = alloc_mem(1, allocflags)) == NO_MEM) {
-		printf("anon_pagefault: out of memory\n");
+	if((new_page_cl = alloc_mem(1, allocflags)) == NO_MEM)
 		return ENOMEM;
-	}
 	new_page = CLICK2ABS(new_page_cl);
 
 	/* Totally new block? Create it. */
@@ -84,7 +83,20 @@ static int anon_pagefault(struct vmproc *vmp, struct vir_region *region,
 
         assert(region->flags & VR_WRITABLE);
 
-	return mem_cow(region, ph, new_page_cl, new_page);
+	if(sys_abscopy(ph->ph->phys, new_page, VM_PAGE_SIZE) != OK) {
+		panic("VM: abscopy failed\n");
+		return EFAULT;
+	}
+
+	if(!(pb = pb_new(new_page))) {
+		free_mem(new_page_cl, 1);
+		return ENOMEM;
+	}
+
+	pb_unreferenced(region, ph, 0);
+	pb_link(ph, pb, ph->offset, region);
+
+	return OK;
 }
 
 static int anon_sanitycheck(struct phys_region *pr, char *file, int line)
@@ -96,11 +108,9 @@ static int anon_sanitycheck(struct phys_region *pr, char *file, int line)
 static int anon_writable(struct phys_region *pr)
 {
 	assert(pr->ph->refcount > 0);
-	if(pr->ph->phys == MAP_NONE)
-		return 0;
 	if(pr->parent->remaps > 0)
 		return 1;
-	return pr->ph->refcount == 1;
+	return pr->ph->phys != MAP_NONE && pr->ph->refcount == 1;
 }
 
 static int anon_resize(struct vmproc *vmp, struct vir_region *vr, vir_bytes l)
@@ -125,18 +135,8 @@ static u32_t anon_regionid(struct vir_region *region)
 	return region->id;
 }
 
-static int anon_lowshrink(struct vir_region *vr, vir_bytes len)
-{
-	return OK;
-}
-
 static int anon_refcount(struct vir_region *vr)
 {
         return 1 + vr->remaps;
 }
 
-static void anon_split(struct vmproc *vmp, struct vir_region *vr,
-			struct vir_region *r1, struct vir_region *r2)
-{
-	return;
-}

@@ -45,7 +45,6 @@ USE(newpb,
 	newpb->phys = phys;
 	newpb->refcount = 0;
 	newpb->firstregion = NULL;
-	newpb->flags = 0;
 	);
 
 	return newpb;
@@ -66,12 +65,13 @@ USE(newphysr,
 	newphysr->ph = newpb;
 	newphysr->parent = parent;
 	newphysr->next_ph_list = newpb->firstregion;
+	newphysr->memtype = parent->memtype;
 	newpb->firstregion = newphysr;);
 	newpb->refcount++;
 }
 
 struct	phys_region *pb_reference(struct phys_block *newpb,
-	vir_bytes offset, struct vir_region *region, mem_type_t *memtype)
+	vir_bytes offset, struct vir_region *region)
 {
 	struct phys_region *newphysr;
 
@@ -79,8 +79,6 @@ struct	phys_region *pb_reference(struct phys_block *newpb,
 	printf("vm: pb_reference: couldn't allocate phys region\n");
 	return NULL;
 	}
-
-	newphysr->memtype = memtype;
 
 	/* New physical region. */
 	pb_link(newphysr, newpb, offset, region);
@@ -100,7 +98,7 @@ void pb_unreferenced(struct vir_region *region, struct phys_region *pr, int rm)
 	pb = pr->ph;
 	assert(pb->refcount > 0);
 	USE(pb, pb->refcount--;);
-/*	assert(pb->refcount >= 0); */ /* always true */
+	assert(pb->refcount >= 0);
 
 	if(pb->firstregion == pr) {
 		USE(pb, pb->firstregion = pr->next_ph_list;);
@@ -122,7 +120,7 @@ void pb_unreferenced(struct vir_region *region, struct phys_region *pr, int rm)
 	if(pb->refcount == 0) {
 		assert(!pb->firstregion);
 		int r;
-		if((r = pr->memtype->ev_unreference(pr)) != OK)
+		if((r = region->memtype->ev_unreference(pr)) != OK)
 			panic("unref failed, %d", r);
 
 		SLABFREE(pb);
@@ -131,38 +129,4 @@ void pb_unreferenced(struct vir_region *region, struct phys_region *pr, int rm)
 	pr->ph = NULL;
 
 	if(rm) physblock_set(region, pr->offset, NULL);
-}
-
-int mem_cow(struct vir_region *region,
-        struct phys_region *ph, phys_bytes new_page_cl, phys_bytes new_page)
-{
-        struct phys_block *pb;
-
-        if(new_page == MAP_NONE) {
-                u32_t allocflags;
-                allocflags = vrallocflags(region->flags);
-
-                if((new_page_cl = alloc_mem(1, allocflags)) == NO_MEM)
-                        return ENOMEM;
-
-                new_page = CLICK2ABS(new_page_cl);
-        }
-
-	assert(ph->ph->phys != MAP_NONE);
-
-        if(sys_abscopy(ph->ph->phys, new_page, VM_PAGE_SIZE) != OK) {
-                panic("VM: abscopy failed\n");
-                return EFAULT;
-        }
-
-        if(!(pb = pb_new(new_page))) {
-                free_mem(new_page_cl, 1);
-                return ENOMEM;
-        }
-
-        pb_unreferenced(region, ph, 0);
-        pb_link(ph, pb, ph->offset, region);
-	ph->memtype = &mem_type_anon;
-
-        return OK;
 }

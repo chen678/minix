@@ -13,6 +13,7 @@
 #define PTF_PRESENT	I386_VM_PRESENT
 #define PTF_USER	I386_VM_USER
 #define PTF_GLOBAL	I386_VM_GLOBAL
+#define PTF_MAPALLOC	I386_VM_PTAVAIL1 /* Page allocated by pt code. */
 #define PTF_NOCACHE	(I386_VM_PWT | I386_VM_PCD)
 
 #define ARCH_VM_DIR_ENTRIES	I386_VM_DIR_ENTRIES
@@ -39,9 +40,5 @@
 #define PFERR_READ(e)	(!((e) & I386_VM_PFE_W))
 
 #define VM_PAGE_SIZE	I386_PAGE_SIZE
-
-/* virtual address -> pde, pte macros */
-#define ARCH_VM_PTE(v) I386_VM_PTE(v)
-#define ARCH_VM_PDE(v) I386_VM_PDE(v)
 
 #endif

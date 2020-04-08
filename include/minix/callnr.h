@@ -59,6 +59,8 @@
 #define ITIMER		  64
 #define GETMCONTEXT       67
 #define SETMCONTEXT       68
+//577
+#define VM_PRINT_HOLES	69
 
 /* Posix signal handling. */
 #define SIGACTION	  71

@@ -1,5 +1,7 @@
 
-#define _SYSTEM		1
+#define _POSIX_SOURCE      1
+#define _MINIX             1
+#define _SYSTEM            1
 
 #include <minix/callnr.h>
 #include <minix/com.h>
@@ -15,6 +17,7 @@
 #include <minix/syslib.h>
 #include <minix/const.h>
 #include <minix/bitmap.h>
+// #include <minix/crtso.h>
 #include <minix/rs.h>
 
 #include <libexec.h>
@@ -45,7 +48,7 @@ extern int missing_spares;
 /* Table of calls and a macro to test for being in range. */
 struct {
 	int (*vmc_func)(message *);	/* Call handles message. */
-	const char *vmc_name;			/* Human-readable string. */
+	char *vmc_name;			/* Human-readable string. */
 } vm_calls[NR_VM_CALLS];
 
 /* Macro to verify call range and map 'high' range to 'base' range
@@ -57,6 +60,7 @@ struct {
 			((c) - VM_RQ_BASE) : -1)
 
 static int map_service(struct rprocpub *rpub);
+static int vm_acl_ok(endpoint_t caller, int call);
 static int do_rs_init(message *m);
 
 /* SEF functions and variables. */
@@ -88,11 +92,10 @@ int main(void)
   /* This is VM's main loop. */
   while (TRUE) {
 	int r, c;
-	int type, param;
 
 	SANITYCHECK(SCL_TOP);
 	if(missing_spares > 0) {
-		alloc_cycle();	/* mem alloc code wants to be called */
+		pt_cycle();	/* pagetable code wants to be called */
 	}
 
   	if ((r=sef_receive_status(ANY, &msg, &rcv_sts)) != OK)
@@ -106,12 +109,14 @@ int main(void)
 	who_e = msg.m_source;
 	if(vm_isokendpt(who_e, &caller_slot) != OK)
 		panic("invalid caller %d", who_e);
-
-	type = param = msg.m_type;
-	type &= 0x0000FFFF;
-	param >>= 16;
-	c = CALLNUMBER(type);
+	c = CALLNUMBER(msg.m_type);
 	result = ENOSYS; /* Out of range or restricted calls return this. */
+
+	// 577
+	if(msg.m_type == VM_PRINT_HOLES){
+		printmemstats();
+		// do_printholes_stats(&msg);
+	}
 	
 	if(msg.m_type == RS_INIT && msg.m_source == RS_PROC_NR) {
 		result = do_rs_init(&msg);
@@ -121,6 +126,7 @@ int main(void)
 					"message!\n", msg.m_source);
 		}
 		do_pagefaults(&msg);
+		pt_clearmapcache();
 		/*
 		 * do not reply to this call, the caller is unblocked by
 		 * a sys_vmctl() call in do_pagefaults if success. VM panics
@@ -130,7 +136,7 @@ int main(void)
 	} else if(c < 0 || !vm_calls[c].vmc_func) {
 		/* out of range or missing callnr */
 	} else {
-		if (acl_check(&vmproc[caller_slot], c) != OK) {
+		if (vm_acl_ok(who_e, c) != OK) {
 			printf("VM: unauthorized %s by %d\n",
 					vm_calls[c].vmc_name, who_e);
 		} else {
@@ -181,7 +187,7 @@ static int do_rs_init(message *m)
 	return(SUSPEND);
 }
 
-static struct vmproc *init_proc(endpoint_t ep_nr)
+struct vmproc *init_proc(endpoint_t ep_nr)
 {
 	static struct boot_image *ip;
 
@@ -250,7 +256,7 @@ static int libexec_alloc_vm_ondemand(struct exec_info *execi,
 	return OK;
 }
 
-static void exec_bootproc(struct vmproc *vmp, struct boot_image *ip)
+void exec_bootproc(struct vmproc *vmp, struct boot_image *ip)
 {
 	struct vm_exec_info vmexeci;
 	struct exec_info *execi = &vmexeci.execi;
@@ -285,18 +291,16 @@ static void exec_bootproc(struct vmproc *vmp, struct boot_image *ip)
         execi->copymem = libexec_copy_physcopy;
         execi->clearproc = NULL;
         execi->clearmem = libexec_clear_sys_memset;
-	execi->allocmem_prealloc_junk = libexec_alloc_vm_prealloc;
-	execi->allocmem_prealloc_cleared = libexec_alloc_vm_prealloc;
+        execi->allocmem_prealloc_junk = libexec_alloc_vm_prealloc;
+		execi->allocmem_prealloc_cleared = libexec_alloc_vm_prealloc;
         execi->allocmem_ondemand = libexec_alloc_vm_ondemand;
 
 	if(libexec_load_elf(execi) != OK)
-		panic("vm: boot process load of process %s (ep=%d) failed\n", 
-			execi->progname,vmp->vm_endpoint);
+		panic("vm: boot process load of %d failed\n", vmp->vm_endpoint);
 
         if(sys_exec(vmp->vm_endpoint, (char *) execi->stack_high - 12,
 		(char *) ip->proc_name, execi->pc) != OK)
-		panic("vm: boot process exec of process %s (ep=%d) failed\n", 
-			execi->progname,vmp->vm_endpoint);
+		panic("vm: boot process exec of %d failed\n", vmp->vm_endpoint);
 
 	/* make it runnable */
 	if(sys_vmctl(vmp->vm_endpoint, VMCTL_BOOTINHIBIT_CLEAR, 0) != OK)
@@ -321,13 +325,13 @@ void init_vm(void)
 		panic("couldn't get bootinfo: %d", s);
 	}
 
-	/* Turn file mmap on? */
-	enable_filemap=1;	/* yes by default */
-	env_parse("filemap", "d", 0, &enable_filemap, 0, 1);
-
 	/* Sanity check */
 	assert(kernel_boot_info.mmap_size > 0);
 	assert(kernel_boot_info.mods_with_kernel > 0);
+
+#if SANITYCHECKS
+	env_parse("vm_sanitychecklevel", "d", 0, &vm_sanitychecklevel, 0, SCL_MAX);
+#endif
 
 	/* Get chunks of available memory. */
 	get_mem_chunks(mem_chunks);
@@ -338,9 +342,6 @@ void init_vm(void)
 	for(i = 0; i < ELEMENTS(vmproc); i++) {
 		vmproc[i].vm_slot = i;
 	}
-
-	/* Initialize ACL data structures. */
-	acl_init();
 
 	/* region management initialization. */
 	map_region_init();
@@ -393,12 +394,12 @@ void init_vm(void)
 	}
 
 	/* Set up table of calls. */
-#define CALLMAP(code, func) { int _cmi;		      \
-	_cmi=CALLNUMBER(code);				\
-	assert(_cmi >= 0);					\
-	assert(_cmi < NR_VM_CALLS);		\
-	vm_calls[_cmi].vmc_func = (func); 	      \
-	vm_calls[_cmi].vmc_name = #code;	      \
+#define CALLMAP(code, func) { int i;		      \
+	i=CALLNUMBER(code);				\
+	assert(i >= 0);					\
+	assert(i < NR_VM_CALLS);			\
+	vm_calls[i].vmc_func = (func); 				      \
+	vm_calls[i].vmc_name = #code; 				      \
 }
 
 	/* Set call table to 0. This invalidates all calls (clear
@@ -419,10 +420,6 @@ void init_vm(void)
 	CALLMAP(VM_WILLEXIT, do_willexit);
 	CALLMAP(VM_NOTIFY_SIG, do_notify_sig);
 
-	/* Calls from VFS. */
-	CALLMAP(VM_VFS_REPLY, do_vfs_reply);
-	CALLMAP(VM_VFS_MMAP, do_vfs_mmap);
-
 	/* Calls from RS */
 	CALLMAP(VM_RS_SET_PRIV, do_rs_set_priv);
 	CALLMAP(VM_RS_UPDATE, do_rs_update);
@@ -440,13 +437,9 @@ void init_vm(void)
 	CALLMAP(VM_INFO, do_info);
 	CALLMAP(VM_QUERY_EXIT, do_query_exit);
 	CALLMAP(VM_WATCH_EXIT, do_watch_exit);
-
-	/* Cache blocks. */
-	CALLMAP(VM_MAPCACHEPAGE, do_mapcache);
-	CALLMAP(VM_SETCACHEPAGE, do_setcache);
-
-	/* getrusage */
-	CALLMAP(VM_GETRUSAGE, do_getrusage);
+	CALLMAP(VM_FORGETBLOCKS, do_forgetblocks);
+	CALLMAP(VM_FORGETBLOCK, do_forgetblock);
+	CALLMAP(VM_YIELDBLOCKGETBLOCK, do_yieldblockgetblock);
 
 	/* Initialize the structures for queryexit */
 	init_query_exit();
@@ -475,7 +468,7 @@ static void sef_cb_signal_handler(int signo)
 	 * though.
 	 */
 	if(missing_spares > 0) {
-		alloc_cycle();	/* pagetable code wants to be called */
+		pt_cycle();	/* pagetable code wants to be called */
 	}
 
 	pt_clearmapcache();
@@ -484,7 +477,8 @@ static void sef_cb_signal_handler(int signo)
 /*===========================================================================*
  *		               map_service                                   *
  *===========================================================================*/
-static int map_service(struct rprocpub *rpub)
+static int map_service(rpub)
+struct rprocpub *rpub;
 {
 /* Map a new service by initializing its call mask. */
 	int r, proc_nr;
@@ -494,7 +488,27 @@ static int map_service(struct rprocpub *rpub)
 	}
 
 	/* Copy the call mask. */
-	acl_set(&vmproc[proc_nr], rpub->vm_call_mask, !IS_RPUB_BOOT_USR(rpub));
+	memcpy(&vmproc[proc_nr].vm_call_mask, &rpub->vm_call_mask,
+		sizeof(vmproc[proc_nr].vm_call_mask));
 
 	return(OK);
 }
+
+/*===========================================================================*
+ *				vm_acl_ok				     *
+ *===========================================================================*/
+static int vm_acl_ok(endpoint_t caller, int call)
+{
+	int n, r;
+
+	if ((r = vm_isokendpt(caller, &n)) != OK)
+		panic("VM: from strange source: %d", caller);
+
+	/* See if the call is allowed. */
+	if (!GET_BIT(vmproc[n].vm_call_mask, call)) {
+		return EPERM;
+	}
+
+	return OK;
+}
+

@@ -11,6 +11,8 @@
 
 struct vmproc;
 
+typedef void (*callback_t)(struct vmproc *who, message *m);
+
 struct vmproc {
 	int		vm_flags;
 	endpoint_t	vm_endpoint;
@@ -20,15 +22,26 @@ struct vmproc {
 	/* Regions in virtual address space. */
 	region_avl vm_regions_avl;
 	vir_bytes  vm_region_top;	/* highest vaddr last inserted */
-	int vm_acl;
+
+	bitchunk_t vm_call_mask[VM_CALL_MASK_SIZE];
+
+	/* State for requests pending to be done to vfs on behalf of
+	 * this process.
+	 */
+	callback_t vm_callback;	  /* function to call on vfs reply */
+	int vm_callback_type; /* expected message type */
+
 	int vm_slot;		/* process table slot */
+	int vm_yielded;		/* yielded regions */
+
+	union {
+		struct {
+			cp_grant_id_t gid;
+		} open;	/* VM_VFS_OPEN */
+	} vm_state;		/* Callback state. */
 #if VMSTATS
 	int vm_bytecopies;
 #endif
-	vir_bytes	vm_total;
-	vir_bytes	vm_total_max;
-	u64_t		vm_minor_page_fault;
-	u64_t		vm_major_page_fault;
 };
 
 /* Bits for vm_flags */

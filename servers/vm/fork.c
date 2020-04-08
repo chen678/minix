@@ -84,8 +84,8 @@ int do_fork(message *msg)
   /* Only inherit these flags. */
   vmc->vm_flags &= VMF_INUSE;
 
-  /* Deal with ACLs. */
-  acl_fork(vmc);
+  /* inherit the priv call bitmaps */
+  memcpy(&vmc->vm_call_mask, &vmp->vm_call_mask, sizeof(vmc->vm_call_mask));
 
   /* Tell kernel about the (now successful) FORK. */
   if((r=sys_fork(vmp->vm_endpoint, childproc,
@@ -102,10 +102,10 @@ int do_fork(message *msg)
 	 * and its return value needn't be checked.
 	 */
 	vir = msgaddr;
-	if (handle_memory(vmc, vir, sizeof(message), 1, NULL, 0, 0) != OK)
+	if (handle_memory(vmc, vir, sizeof(message), 1) != OK)
 	    panic("do_fork: handle_memory for child failed\n");
 	vir = msgaddr;
-	if (handle_memory(vmp, vir, sizeof(message), 1, NULL, 0, 0) != OK)
+	if (handle_memory(vmp, vir, sizeof(message), 1) != OK)
 	    panic("do_fork: handle_memory for parent failed\n");
   }
 

@@ -28,9 +28,9 @@
 #include "util.h"
 #include "sanitycheck.h"
 
-#define SLABSIZES 200
+#define SLABSIZES 60
 
-#define ITEMSPERPAGE(bytes) (int)(DATABYTES / (bytes))
+#define ITEMSPERPAGE(bytes) (DATABYTES / (bytes))
 
 #define ELBITS		(sizeof(element_t)*8)
 #define BITPAT(b)	(1UL << ((b) %  ELBITS))
@@ -128,12 +128,12 @@ static int objstats(void *, int, struct slabheader **, struct slabdata
 	**, int *);
 
 #define GETSLAB(b, s) {			\
-	int _gsi;				\
+	int i;				\
 	assert((b) >= MINSIZE);	\
-	_gsi = (b) - MINSIZE;		\
-	assert((_gsi) < SLABSIZES);	\
-	assert((_gsi) >= 0);		\
-	s = &slabs[_gsi];			\
+	i = (b) - MINSIZE;		\
+	assert((i) < SLABSIZES);	\
+	assert((i) >= 0);		\
+	s = &slabs[i];			\
 }
 
 /* move slabdata nw to slabheader sl under list number l. */
@@ -156,7 +156,7 @@ static int objstats(void *, int, struct slabheader **, struct slabdata
 	if(next) { SLABDATAUSE(next, next->sdh.prev = prev;); }	\
 }
 
-static struct slabdata *newslabdata(void)
+static struct slabdata *newslabdata()
 {
 	struct slabdata *n;
 	phys_bytes p;
@@ -457,7 +457,6 @@ void slabfree(void *mem, int bytes)
 	return;
 }
 
-#if MEMPROTECT
 /*===========================================================================*
  *				void *slablock				     *
  *===========================================================================*/
@@ -495,7 +494,6 @@ void slabunlock(void *mem, int bytes)
 
 	return;
 }
-#endif
 
 #if SANITYCHECKS
 /*===========================================================================*
