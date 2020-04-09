@@ -21,6 +21,8 @@
 #include <errno.h>
 #include <assert.h>
 #include <memory.h>
+#include <stdbool.h>
+#include <stdint.h>
 
 #include "vm.h"
 #include "proto.h"
@@ -299,7 +301,57 @@ void free_mem(phys_clicks base, phys_clicks clicks)
   free_pages(base, clicks);
   return;
 }
+//577
+int do_holes(message* m)
+{
+	if (m->m_type != VM_PRINT_HOLES)
+	{
+		printf("WARNING: do_holes() recieve non-matched message type %d.", m->m_type);
+	};
 
+	int32_t min_holes = m->m_u.m_m4.m4l1;
+	int32_t i;
+	bool is_free = false;
+	uint32_t hole_start = 0;
+
+#ifdef _DEBUG_577
+	uint32_t in_use = 0;
+#endif // _DEBUG_577
+
+
+	debug_print("VM:do_holes(): min_holes=%d. MAX=0x%08X.\n", min_holes, NUMBER_PHYSICAL_PAGES);
+
+	for (i = 0; i < NUMBER_PHYSICAL_PAGES; ++i)
+	{
+		if (!page_isfree(i))
+		{
+			++in_use;
+			if (is_free)
+			{
+				char to_print[256];
+				int32_t hole_size = i - hole_start;
+				if (hole_size >= min_holes)
+				{
+					snprintf(to_print, sizeof(to_print), "Hole:0x%08X~0x%08X, Size:%d(0x%08X).\n", hole_start, i - 1, hole_size, hole_size);
+					printf("%s", to_print);
+				}
+				is_free = false;
+			}
+		}
+		else //free 
+		{
+			if (!is_free)
+			{
+				hole_start = i;
+			}
+			is_free = true;
+		}
+	}
+
+	debug_print("VM:do_holes(),IN_USE=(%d)0x%08X.\n", in_use, in_use);
+
+	return OK;
+}
 /*===========================================================================*
  *				mem_init				     *
  *===========================================================================*/
@@ -370,6 +422,16 @@ static int findbit(int low, int startscan, int pages, int memflags, int *len)
 {
 	int run_length = 0, i;
 	int freerange_start = startscan;
+	int current_best_length = startscan - low;
+	int best_fit_start_address = startscan;
+	bool found = false;
+
+#ifdef _DEBUG_577
+    if (pages >= 10)
+	{
+		debug_print("VM:findbit():low=0x%06X,startscan=0x%06X,pages=0x%06X(%d)\n.",low,startscan,pages,pages);
+	}
+#endif // _DEBUG_577
 
 	for(i = startscan; i >= low; i--) {
 		if(!page_isfree(i)) {
@@ -385,14 +447,24 @@ static int findbit(int low, int startscan, int pages, int memflags, int *len)
 			if(moved) { i = chunk * BITCHUNK_BITS + BITCHUNK_BITS; }
 			continue;
 		}
+		//577
 		if(!run_length) { freerange_start = i; run_length = 1; }
 		else { freerange_start--; run_length++; }
-		assert(run_length <= pages);
-		if(run_length == pages) {
-			/* good block found! */
-			*len = run_length;
-			return freerange_start;
+		if ((!page_isfree(i-1)) && (run_length >= pages) && (run_length <= current_best_length)) {
+			current_best_length = run_length;
+			best_fit_start_address = freerange_start;
+			found = true;
 		}
+	}
+	if (found) {
+		*len = current_best_length;
+#ifdef _DEBUG_577
+		if (pages >= 10)
+		{
+            debug_print("VM:findbit():Found best:0x%06X,len=0x%06X(%d).\n.", best_fit_start_address, *len, *len);
+		}
+#endif // _DEBUG_577
+		return best_fit_start_address;
 	}
 
 	return NO_MEM;
