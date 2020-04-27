@@ -176,6 +176,8 @@ int sef_cb_lu_response_rs_reply(message *m_ptr);
 #define SEF_LU_STATE_CUSTOM_BASE        (SEF_LU_STATE_PROTOCOL_FREE+1)
 #define SEF_LU_STATE_IS_STANDARD(s)     ((s) > SEF_LU_STATE_NULL \
     && (s) < SEF_LU_STATE_CUSTOM_BASE)
+// 577
+#define SELF_LU_QUEUE					4	/* CHANGE TO USE QUEUE */
 
 /* Debug. */
 #define SEF_LU_DEBUG_DEFAULT 1
